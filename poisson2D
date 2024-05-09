@@ -1,0 +1,82 @@
+ /* convective_rolls.edp Vortex caused by free convection
+ *
+ *  Solves the Laplace Equation on a parallel plate capacitor boundary.
+ *  P1 Elements are used in written in order to be plot with Matlab / Octave.
+ *
+ * Author: Chloros2 <chloros2@gmx.de>
+ * Created: 2018-05-19
+ *
+ * Copyright (C) 2018 Chloros2 <chloros2@gmx.de>
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hopeC that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see
+ * <https://www.gnu.org/licenses/>.
+ *
+ */
+
+include "ffmatlib.idp"
+
+load "UMFPACK64";
+
+ // prametres 
+   int[int] dirhomo = [1,1,1,1];
+   real n = 21;
+   func f = 2*y*(1-y)+2*x*(1-x);
+
+  border g1(t=0, 1){x=t; y=0; label=1;};
+  border g2(t=0, 1){x=1; y=t; label=1;};
+  border g3(t=1, 0){x=t; y=1; label=1;};
+  border g4(t=1, 0){x=0; y=t; label=1;};
+  
+  mesh Th=buildmesh( g1(n)+g2(n)+g3(n)+g4(n) );
+  plot(Th);
+
+   real h0=1./(n-1);
+//    cout<<"h0="<<h0<<endl;
+
+  // fespace
+  fespace Vh(Th,P1);
+   Vh  u, v, err, w;
+       w=x*y*(1-x)*(1-y); // solution exacte
+
+   Vh h=hTriangle; 
+// cout<<"size of mesh="<<h[].max<<endl;
+
+  savemesh(Th,"poisson2D.msh");
+  ffSaveVh(Th,Vh,"poisson2D_Vh.txt");
+ 
+ // Macro 
+ macro Grad2(v)[dx(v), dy(v)] // EOM
+
+// Th.nt;
+// Th.nv;
+ // Th[i][j] le sommet j du triangle i
+ // savemesh( nom maillage , nom fichier ) ; // permet de sauver le maillage au format.msh
+ // readmesh( nom fichier ) ; // permet de lire un maillage à partir d'un fichier.msh
+
+ solve poisson2D(u, v, solver=GMRES)=  int2d(Th)( Grad2(u)'*Grad2(v))
+                                            - int2d(Th)( f*v )
+                                            + on(dirhomo, u=0);
+
+// Calcul d'erreur L2 pour le problème 
+   Vh e=w-u;
+  real erreur=sqrt( int2d (Th)( ( w-u )'*( w-u ) ) );
+  real errh = sqrt( int2d(Th)( Grad2(e)'*Grad2(e) ) );
+  string legende ="erreur = "+ erreur;
+
+ cout <<"h0="<<h0<<", h="<<h[].max<<", l2err = "<< erreur <<", H10err="<<errh<< endl;
+
+// cout<<"erreur="<<erreur<<endl;
+ plot(u, wait=1, ColorScheme=2, fill=1, dim=3);
+ ffSaveData(u,"poisson2D_u.txt");
+ ffSaveData(w,"poisson2D_w.txt");
