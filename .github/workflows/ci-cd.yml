@@ -1,91 +1,115 @@
 # =============================================================================
-# Pipeline CI/CD du projet Poisson2D_P1_Fortran
+# Pipeline CI/CD du projet Poisson2D_P1_Fortran.
 #
-# Emplacement du workflow :
-#   .github/workflows/ci-cd.yml
+# CI :
+#   - vérifier les fichiers ;
+#   - compiler ;
+#   - exécuter plusieurs maillages ;
+#   - contrôler les données ;
+#   - générer et vérifier les images ;
+#   - archiver les résultats.
 #
-# Emplacement du code dans le dépôt :
+# Publication :
+#   - après le push d'un tag v*, publier une release avec les résultats.
+#
+# Attention :
+#   Le workflow est à la racine du dépôt, mais le code est dans :
 #   Poisson2D_P1_Fortran/
 # =============================================================================
 
 name: CI/CD Poisson2D_Fortran
 
+# =============================================================================
+# Événements déclenchant le workflow.
+# =============================================================================
 on:
-  # Compilation et vérifications après un push sur main.
-  # Publication supplémentaire lorsqu’un tag v* est poussé.
+  # Exécuter après un push sur main ou après un push de tag v*.
   push:
     branches:
       - main
     tags:
       - "v*"
 
-  # Vérifications sur les pull requests vers main.
+  # Exécuter sur les pull requests dont la branche cible est main.
   pull_request:
     branches:
       - main
 
-  # Permet le lancement manuel depuis l’onglet Actions.
+  # Autoriser aussi un lancement manuel depuis GitHub Actions.
   workflow_dispatch:
 
-# Lecture seule par défaut.
-# Le droit d’écriture sera accordé uniquement au job release.
+# Autorisation minimale commune aux jobs.
+# La publication recevra un droit d'écriture séparément.
 permissions:
   contents: read
 
 jobs:
   # ===========================================================================
-  # JOB 1 : compilation, exécution, visualisation et archivage.
+  # JOB 1 : compilation et vérifications.
   # ===========================================================================
   build-test-visualize:
     name: Compiler, tester et visualiser
 
+    # Machine virtuelle utilisée pour cette exécution.
     runs-on: ubuntu-latest
+
+    # Éviter qu'une exécution bloquée continue indéfiniment.
     timeout-minutes: 20
 
-    # Ces paramètres s’appliquent à toutes les étapes "run" de ce job.
-    # Ne pas ajouter "cd Poisson2D_P1_Fortran" dans ces étapes.
+    # Ces réglages concernent uniquement les étapes "run".
     defaults:
       run:
         shell: bash
+
+        # Le Makefile et les sources se trouvent dans ce sous-dossier.
         working-directory: Poisson2D_P1_Fortran
 
     env:
-      # Matplotlib fonctionne sans écran sur le serveur GitHub.
+      # Générer les images sans interface graphique.
       MPLBACKEND: Agg
 
-      # Limiter le parallélisme des bibliothèques numériques.
+      # Limiter le nombre de threads des bibliothèques numériques.
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"
 
     steps:
       # -----------------------------------------------------------------------
-      # 1. Récupération du dépôt.
+      # 1. Copier le contenu du dépôt dans la machine d'exécution.
       # -----------------------------------------------------------------------
       - name: Récupérer le code source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -----------------------------------------------------------------------
-      # 2. Vérification de la structure réellement présente sur GitHub.
+      # 2. Vérifier les fichiers nécessaires avant toute compilation.
       # -----------------------------------------------------------------------
       - name: Vérifier les fichiers du projet
         run: |
           echo "Dossier de travail :"
           pwd
 
-          echo "Fichiers disponibles :"
+          echo "Contenu du dossier :"
           ls -lah
 
-          test -f Makefile
-          test -f main.f90
-          test -f params_module.f90
-          test -f mesh_module.f90
-          test -f exact_solution_module.f90
-          test -f fem_module.f90
-          test -f solver_module.f90
-          test -f error_module.f90
+          # Chaque fichier doit exister et ne pas être vide.
+          for file in \
+            Makefile \
+            main.f90 \
+            params_module.f90 \
+            mesh_module.f90 \
+            exact_solution_module.f90 \
+            fem_module.f90 \
+            solver_module.f90 \
+            error_module.f90 \
+            plot_solution.py; do
+
+            if [ ! -s "$file" ]; then
+              echo "::error::Fichier absent ou vide : $file"
+              exit 1
+            fi
+          done
 
       # -----------------------------------------------------------------------
-      # 3. Installation du compilateur et des bibliothèques numériques.
+      # 3. Installer les outils nécessaires à la compilation Fortran.
       # -----------------------------------------------------------------------
       - name: Installer les dépendances Fortran
         run: |
@@ -98,87 +122,111 @@ jobs:
             libblas-dev
 
       # -----------------------------------------------------------------------
-      # 4. Compilation avec le Makefile du sous-dossier.
+      # 4. Nettoyer les anciens fichiers et compiler.
       # -----------------------------------------------------------------------
       - name: Compiler le projet Fortran
         run: |
+          # Nettoyer les fichiers générés.
           make clean
+
+          # Compiler dans le sous-dossier défini par working-directory.
           make
 
-          # Vérifier que le Makefile a produit l’exécutable attendu.
-          test -x bin/poisson2d
+          # Le Makefile doit produire cet exécutable.
+          if [ ! -x bin/poisson2d ]; then
+            echo "::error::Exécutable bin/poisson2d absent."
+            exit 1
+          fi
 
       # -----------------------------------------------------------------------
-      # 5. Installation de Python.
+      # 5. Préparer Python.
       # -----------------------------------------------------------------------
       - name: Installer Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
+      # -----------------------------------------------------------------------
+      # 6. Installer les bibliothèques de lecture et de visualisation.
+      #
+      # Les versions sont fixées afin de limiter les variations
+      # d'environnement entre deux exécutions.
+      # -----------------------------------------------------------------------
       - name: Installer les bibliothèques Python
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy matplotlib
+
+          python -m pip install \
+            "numpy==2.2.6" \
+            "matplotlib==3.10.3"
 
       # -----------------------------------------------------------------------
-      # 6. Étude de convergence.
+      # 7. Résoudre le problème pour sept maillages.
       #
-      # Sept maillages modestes pour rester compatible avec le solveur dense.
-      #
-      # Le dernier maillage est n=20 :
-      # le script Python fourni précédemment utilise nx=ny=20.
+      # Chaque lancement est un processus distinct :
+      # les allocations Fortran sont recréées à chaque exécution.
       # -----------------------------------------------------------------------
       - name: Exécuter l’étude de convergence
         run: |
           mkdir -p results
+
+          # Repartir d'un tableau vide pour cette étude.
           rm -f results/error_convergence.dat
 
+          # Maillages modestes pour le stockage matriciel dense actuel.
           for n in 2 4 6 8 10 15 20; do
             echo "========================================"
-            echo "Résolution pour le maillage ${n} x ${n}"
+            echo "Résolution sur le maillage ${n} x ${n}"
             echo "========================================"
 
             ./bin/poisson2d "$n"
           done
 
       # -----------------------------------------------------------------------
-      # 7. Contrôles des fichiers et des valeurs numériques.
+      # 8. Contrôler la structure et la validité des données.
       #
-      # Ces contrôles vérifient les données, pas encore les ordres théoriques.
+      # Ces tests ne démontrent pas les ordres de convergence.
+      # Ils vérifient que les fichiers sont cohérents et exploitables.
       # -----------------------------------------------------------------------
       - name: Vérifier les résultats Fortran
         run: |
+          # -s : le fichier doit exister et avoir une taille non nulle.
           test -s results/solution.dat
           test -s results/error_convergence.dat
 
+          # Exécuter un programme Python directement depuis le workflow.
           python - <<'PY'
           import numpy as np
 
           solution = np.loadtxt(
-              "results/solution.dat", ndmin=2
+              "results/solution.dat",
+              ndmin=2
           )
 
           convergence = np.loadtxt(
-              "results/error_convergence.dat", ndmin=2
+              "results/error_convergence.dat",
+              ndmin=2
           )
 
-          # Le dernier maillage n=20 contient (20+1)^2 = 441 noeuds.
+          # Le dernier maillage est n=20.
+          # Il contient donc (20+1)^2 = 441 noeuds.
+          # Chaque noeud fournit x, y, uh et u_exact.
           if solution.shape != (441, 4):
               raise ValueError(
-                  "solution.dat doit contenir 441 lignes et 4 colonnes. "
+                  "Pour le dernier maillage n=20, "
+                  "solution.dat doit avoir 441 lignes et 4 colonnes. "
                   f"Forme obtenue : {solution.shape}"
               )
 
-          # Une ligne par maillage :
-          # n, h, erreur_L2, erreur_H1, erreur_Linf.
+          # Sept maillages, cinq colonnes par mesure.
           if convergence.shape != (7, 5):
               raise ValueError(
-                  "error_convergence.dat doit contenir "
+                  "Le tableau de convergence doit contenir "
                   "7 lignes et 5 colonnes. "
                   f"Forme obtenue : {convergence.shape}"
               )
 
+          # Interdire NaN et infini dans les résultats.
           if not np.isfinite(solution).all():
               raise ValueError(
                   "La solution contient des valeurs NaN ou infinies."
@@ -190,108 +238,182 @@ jobs:
                   "des valeurs NaN ou infinies."
               )
 
+          # Les logarithmes nécessitent des pas et erreurs positifs.
           if np.any(convergence[:, 1:] <= 0):
               raise ValueError(
-                  "Le pas h et les erreurs doivent être "
-                  "strictement positifs pour calculer les logarithmes."
+                  "Les pas et les erreurs doivent être positifs."
               )
 
           expected_n = np.array([2, 4, 6, 8, 10, 15, 20])
 
-          if not np.array_equal(convergence[:, 0], expected_n):
+          # Vérifier que toutes les exécutions sont présentes,
+          # dans l'ordre attendu.
+          if not np.array_equal(
+              convergence[:, 0],
+              expected_n
+          ):
               raise ValueError(
-                  "La liste des maillages enregistrés est incorrecte."
+                  "Les maillages enregistrés ne correspondent "
+                  "pas aux maillages exécutés."
               )
 
+          # Le domaine est le carré unité : h=1/n.
           if not np.allclose(
-              convergence[:, 1], 1.0 / expected_n
+              convergence[:, 1],
+              1.0 / expected_n
           ):
               raise ValueError(
                   "Les pas enregistrés ne correspondent pas à h=1/n."
               )
 
-          print("Validation des fichiers numériques : OK")
+          print("Validation des données : OK")
           print("Colonnes : n, h, erreur_L2, erreur_H1, erreur_Linf")
           print(convergence)
           PY
 
       # -----------------------------------------------------------------------
-      # 8. Génération des figures.
-      #
-      # Accepte les deux noms de script utilisés dans le projet.
-      # Si les deux existent, plot_solution_convergence.py est prioritaire.
+      # 9. Générer les deux figures avec un seul script de référence.
       # -----------------------------------------------------------------------
       - name: Générer les figures Python
         run: |
-          if [ -f plot_solution_convergence.py ]; then
-            python plot_solution_convergence.py
-          elif [ -f plot_solution.py ]; then
-            python plot_solution.py
-          else
-            echo "ERREUR : aucun script de visualisation trouvé."
-            exit 1
-          fi
+          echo "Script exécuté : plot_solution.py"
+
+          # Supprimer les anciennes images pour ne pas valider
+          # accidentellement des fichiers d'une exécution précédente.
+          rm -f results/solution.png
+          rm -f results/log_convergence.png
+
+          # -u : afficher immédiatement les sorties Python dans les logs.
+          python -u plot_solution.py
 
       # -----------------------------------------------------------------------
-      # 9. Vérification des images.
+      # 10. Vérifier la présence et la lisibilité des images.
       # -----------------------------------------------------------------------
       - name: Vérifier les figures générées
         run: |
-          test -s results/solution.png
-          test -s results/log_convergence.png
+          echo "Dossier de travail :"
+          pwd
 
-          echo "Les deux figures ont été générées."
+          # Aider au diagnostic si une image a été créée au mauvais endroit.
+          echo "Images présentes dans le dépôt :"
+          find "$GITHUB_WORKSPACE" -type f -name "*.png" -print
+
+          missing=0
+
+          for image in \
+            results/solution.png \
+            results/log_convergence.png; do
+
+            if [ -s "$image" ]; then
+              echo "OK : $image"
+              ls -lh "$image"
+            else
+              # Cette syntaxe crée une annotation d'erreur GitHub.
+              echo "::error::Image absente ou vide : $image"
+              missing=1
+            fi
+          done
+
+          # Arrêter le job si au moins une image manque.
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          # Vérifier qu'il s'agit de véritables images lisibles.
+          python - <<'PY'
+          import matplotlib.image as mpimg
+
+          paths = [
+              "results/solution.png",
+              "results/log_convergence.png",
+          ]
+
+          for path in paths:
+              image = mpimg.imread(path)
+
+              if image.size == 0:
+                  raise ValueError(f"Image vide : {path}")
+
+              print(
+                  f"Image lisible : {path}, "
+                  f"dimensions : {image.shape}"
+              )
+          PY
 
       # -----------------------------------------------------------------------
-      # 10. Archivage des données et figures.
+      # 11. Conserver le tableau dans les journaux d'exécution.
+      # -----------------------------------------------------------------------
+      - name: Afficher les résultats de convergence
+        run: |
+          cat results/error_convergence.dat
+
+      # -----------------------------------------------------------------------
+      # 12. Archiver les résultats.
       #
-      # Attention : working-directory ne s’applique pas à uses.
-      # Les chemins sont donc donnés depuis la racine du dépôt.
+      # Important :
+      # defaults.run.working-directory ne s'applique pas à une action "uses".
+      # Les chemins sont donc indiqués depuis la racine du dépôt.
       # -----------------------------------------------------------------------
       - name: Archiver les résultats
         uses: actions/upload-artifact@v4
         with:
           name: poisson2d-results
+
           path: |
             Poisson2D_P1_Fortran/results/solution.dat
             Poisson2D_P1_Fortran/results/error_convergence.dat
             Poisson2D_P1_Fortran/results/solution.png
             Poisson2D_P1_Fortran/results/log_convergence.png
+
+          # Échouer si aucun fichier ne correspond aux chemins.
           if-no-files-found: error
+
+          # Durée de conservation de l'artefact.
           retention-days: 14
 
   # ===========================================================================
-  # JOB 2 : publication d’une release après un push de tag v*.
+  # JOB 2 : publication des résultats dans une release.
   # ===========================================================================
   release:
     name: Publier une release
 
+    # Attendre la réussite du job précédent.
     needs: build-test-visualize
 
+    # Publier seulement après un push de tag commençant par v.
+    # Un lancement manuel ou une pull request ne publie pas de release.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    # Permission nécessaire uniquement pour publier la release.
+    # Le droit d'écriture est limité au job de publication.
     permissions:
       contents: write
 
     steps:
-      - name: Télécharger les résultats
+      # Les jobs ne partagent pas leur disque.
+      # Il faut télécharger l'artefact produit par le premier job.
+      - name: Télécharger les résultats validés
         uses: actions/download-artifact@v4
         with:
           name: poisson2d-results
           path: results
 
+      # Regrouper les données et les images dans une archive unique.
       - name: Créer une archive des résultats
         run: |
           zip -r poisson2d-results.zip results
           test -s poisson2d-results.zip
 
+      # Créer ou mettre à jour la release associée au tag déclencheur.
       - name: Publier une release GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: poisson2d-results.zip
+
+          # Produire automatiquement les notes de release.
           generate_release_notes: true
+
+          # Échouer si l'archive annoncée est absente.
           fail_on_unmatched_files: true
