@@ -1,0 +1,192 @@
+# =============================================================================
+# Pipeline CI/CD du projet Poisson2D_Fortran
+# =============================================================================
+
+name: CI/CD Poisson2D_Fortran
+
+# Déclencheurs du pipeline :
+# - à chaque push sur main ;
+# - à chaque pull request vers main ;
+# - à chaque création ou poussée d’un tag commençant par v.
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+  pull_request:
+    branches:
+      - main
+
+# Permissions nécessaires pour créer une release GitHub.
+permissions:
+  contents: write
+
+# Définition des tâches exécutées par le pipeline.
+jobs:
+  build-test-visualize:
+
+    # Environnement d’exécution.
+    runs-on: ubuntu-latest
+
+    steps:
+
+      #---------------------------------------------------------------------
+      # Étape 1 : récupération du code source depuis GitHub.
+      #---------------------------------------------------------------------
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+
+      #---------------------------------------------------------------------
+      # Étape 2 : installation du compilateur Fortran, LAPACK et BLAS.
+      #---------------------------------------------------------------------
+      - name: Installer les dépendances Fortran
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran liblapack-dev libblas-dev
+
+      #---------------------------------------------------------------------
+      # Étape 3 : compilation du projet avec le Makefile.
+      #---------------------------------------------------------------------
+      - name: Compiler le projet Fortran
+        run: |
+          make clean
+          make
+
+      #---------------------------------------------------------------------
+      # Étape 4 : exécution du programme sur plusieurs maillages.
+      #
+      # Cette étude permet de vérifier que l’erreur diminue
+      # lorsque le maillage devient plus fin.
+      #---------------------------------------------------------------------
+      - name: Exécuter l’étude de convergence
+        run: |
+          mkdir -p results
+          rm -f results/error_convergence.dat
+
+          ./bin/poisson2d 2
+          ./bin/poisson2d 5
+          ./bin/poisson2d 10
+          ./bin/poisson2d 20
+          ./bin/poisson2d 40
+          ./bin/poisson2d 80
+
+      #---------------------------------------------------------------------
+      # Étape 5 : vérification de l’existence des fichiers de résultats.
+      #---------------------------------------------------------------------
+      - name: Vérifier les résultats Fortran
+        run: |
+          test -f results/solution.dat
+          test -f results/error_convergence.dat
+
+          echo "Les fichiers de résultats Fortran ont été générés."
+
+      #---------------------------------------------------------------------
+      # Étape 6 : installation de Python et des dépendances.
+      #---------------------------------------------------------------------
+      - name: Installer Python et les dépendances
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les bibliothèques Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy matplotlib
+
+      #---------------------------------------------------------------------
+      # Étape 7 : génération des figures Python.
+      #
+      # Le script génère :
+      #   - results/solution.png
+      #   - results/log_convergence.png
+      #---------------------------------------------------------------------
+      - name: Générer les figures Python
+        run: |
+          python3 plot_solution_convergence.py
+
+      #---------------------------------------------------------------------
+      # Étape 8 : vérification de l’existence des figures générées.
+      #---------------------------------------------------------------------
+      - name: Vérifier les figures générées
+        run: |
+          test -f results/solution.png
+          test -f results/log_convergence.png
+
+          echo "Les figures ont été générées avec succès."
+
+      #---------------------------------------------------------------------
+      # Étape 9 : affichage du tableau de convergence dans les logs.
+      #---------------------------------------------------------------------
+      - name: Afficher les résultats de convergence
+        run: |
+          echo "Résultats de convergence :"
+          cat results/error_convergence.dat
+
+      #---------------------------------------------------------------------
+      # Étape 10 : archivage des résultats et figures.
+      #
+      # Les artefacts sont disponibles dans l’onglet Actions de GitHub.
+      #---------------------------------------------------------------------
+      - name: Archiver les résultats
+        uses: actions/upload-artifact@v4
+        with:
+          name: poisson2d-results
+          path: |
+            results/solution.dat
+            results/error_convergence.dat
+            results/solution.png
+            results/log_convergence.png
+          if-no-files-found: error
+
+  #===========================================================================
+  # Tâche de publication automatique.
+  #
+  # Elle est exécutée uniquement lorsqu’un tag commençant par v est poussé,
+  # par exemple :
+  #   v1.0.0
+  #===========================================================================
+  release:
+
+    # Cette tâche dépend de la réussite de la tâche build-test-visualize.
+    needs: build-test-visualize
+
+    # Elle est exécutée uniquement pour les tags commençant par v.
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      #---------------------------------------------------------------------
+      # Étape 1 : récupération du code source.
+      #---------------------------------------------------------------------
+      - name: Récupérer le code source
+        uses: actions/checkout@v4
+
+      #---------------------------------------------------------------------
+      # Étape 2 : téléchargement des résultats générés précédemment.
+      #---------------------------------------------------------------------
+      - name: Télécharger les résultats
+        uses: actions/download-artifact@v4
+        with:
+          name: poisson2d-results
+          path: results
+
+      #---------------------------------------------------------------------
+      # Étape 3 : création d’une archive contenant les résultats.
+      #---------------------------------------------------------------------
+      - name: Créer une archive des résultats
+        run: |
+          zip -r poisson2d-results.zip results
+
+      #---------------------------------------------------------------------
+      # Étape 4 : publication automatique d’une release GitHub.
+      #---------------------------------------------------------------------
+      - name: Publier une release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            poisson2d-results.zip
+          generate_release_notes: true
