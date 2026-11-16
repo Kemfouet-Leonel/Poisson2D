@@ -19,6 +19,8 @@ on:
     branches:
       - main
 
+  workflow_dispatch: 
+
 # Permissions nécessaires pour créer une release GitHub.
 permissions:
   contents: write
@@ -29,6 +31,12 @@ jobs:
 
     # Environnement d’exécution.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        shell: bash
+        working_directory: Poisson2D_P1_Fortran
 
     steps:
 
@@ -37,6 +45,13 @@ jobs:
       #---------------------------------------------------------------------
       - name: Récupérer le code source
         uses: actions/checkout@v4
+ 
+      # -------- vérification de la presence du fichier Makefile ----------
+      - name: Vérifier le dossier du projet et le Makefile
+        run: |
+          pwd
+          ls -lah
+          test -f Makefile    # vérification du Makefile
 
       #---------------------------------------------------------------------
       # Étape 2 : installation du compilateur Fortran, LAPACK et BLAS.
