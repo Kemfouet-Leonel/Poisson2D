@@ -1,501 +1,773 @@
 # Poisson2D_P1_Fortran
 
-Ce projet résout numériquement l’équation de Poisson en deux dimensions par la méthode des éléments finis \(P_1\), en langage Fortran 90. Il permet également d’étudier l’influence de la finesse du maillage sur l’erreur numérique et de visualiser la solution ainsi que la convergence à l’aide de Python.
+## Présentation du projet
 
-Le problème résolu est le suivant :
+Ce projet résout numériquement l’équation de Poisson en deux dimensions par la méthode des éléments finis P1 sur un maillage triangulaire structuré.
+
+Le solveur est développé en Fortran et organisé en modules afin de séparer les différentes étapes du calcul : paramètres, maillage, assemblage, résolution et calcul des erreurs.
+
+Un script Python permet de représenter la solution approchée, les valeurs de la solution exacte et les courbes de convergence.
+
+Un pipeline GitHub Actions automatise la compilation, l’exécution sur plusieurs maillages, les contrôles des données, la génération des figures et la publication des résultats.
+
+- Dossier du solveur : `Poisson2D_P1_Fortran/`
+- Script de visualisation : `plot_solution.py`
+- Workflow : `.github/workflows/ci-cd.yml`
+- Artefact de résultats : `poisson2d-results`
+
+## Sommaire
+
+1. Objectifs
+2. Problème mathématique
+3. Méthode numérique
+4. Arborescence
+5. Description des fichiers
+6. Installation des dépendances
+7. Compilation et exécution
+8. Étude de convergence
+9. Visualisation
+10. Résultats et interprétation
+11. Pipeline CI/CD
+12. Récupération des artefacts
+13. Nettoyage et versionnement
+
+## 1. Objectifs
+
+Le projet vise à :
+
+- résoudre un problème de Poisson 2D avec second membre non nul en utilisant les éléments finis $P_1$;
+- construire un maillage triangulaire du carré unité ;
+- assembler la matrice de rigidité et le second membre ;
+- imposer des conditions de Dirichlet homogènes ;
+- résoudre le système linéaire avec LAPACK ;
+- comparer la solution approchée à une solution analytique connue ;
+- étudier l’effet du raffinement sur les erreurs en normes $L^2, H^1, L^{\infty}$ ;
+- tracer log(erreur) en fonction de log(h) afin d'observer l'ordre de convergence ;
+- automatiser la chaîne de calcul avec GitHub Actions ;
+- conserver les résultats sous forme d’artefacts.
+
+## 2. Problème mathématique
+
+### 2.1 Équation de Poisson
+
+On considère le domaine :
 
 \[
--\Delta u = f \quad \text{dans } \Omega = (0,1) \times (0,1),
+\Omega=(0,1)\times(0,1).
 \]
 
-avec des conditions de Dirichlet homogènes sur toute la frontière :
+Le problème consiste à chercher \(u\) telle que :
 
 \[
-u = 0 \quad \text{sur } \partial\Omega.
+-\Delta u=f \quad \text{dans }\Omega,
 \]
 
-Le second membre est choisi non nul :
+avec :
 
 \[
-f(x,y) = 2\pi^2 \sin(\pi x)\sin(\pi y).
+u=0 \quad \text{sur }\partial\Omega.
 \]
 
-La solution exacte associée est :
+### 2.2 Solution exacte
+
+La solution analytique choisie est :
 
 \[
-u(x,y) = \sin(\pi x)\sin(\pi y).
+u(x,y)=\sin(\pi x)\sin(\pi y).
 \]
 
-## Objectifs du projet
+Elle satisfait les conditions de Dirichlet homogènes sur les quatre côtés du carré.
 
-Ce projet a pour objectifs de :
+### 2.3 Second membre
 
-- résoudre l’équation de Poisson 2D par la méthode des éléments finis \(P_1\) ;
-- construire un maillage triangulaire structuré du carré unité ;
-- assembler la matrice de rigidité globale et le second membre global ;
-- imposer les conditions de Dirichlet homogènes ;
-- résoudre le système linéaire \(A U = b\) avec LAPACK ;
-- calculer les erreurs en normes \(L^2\), \(H^1\) et \(L^\infty\) ;
-- étudier la convergence de la méthode pour plusieurs maillages ;
-- visualiser la solution approchée et la solution exacte en Python ;
-- tracer \(\log(\text{erreur})\) en fonction de \(\log(h)\) afin d’observer l’ordre de convergence.
-
-## Méthode numérique
-
-Le domaine \(\Omega = (0,1)^2\) est discrétisé par un maillage triangulaire structuré. Chaque rectangle élémentaire est divisé en deux triangles.
-
-Pour un maillage de taille \(n \times n\), on a :
+Le second membre associé est :
 
 \[
-h = \frac{1}{n}.
+f(x,y)=2\pi^2\sin(\pi x)\sin(\pi y).
+\]
+
+Cette expression vérifie :
+
+\[
+-\Delta u=f.
+\]
+
+### 2.4 Gradient exact
+
+Le gradient de la solution est :
+
+\[
+\nabla u(x,y)=
+\begin{pmatrix}
+\pi\cos(\pi x)\sin(\pi y)\\
+\pi\sin(\pi x)\cos(\pi y)
+\end{pmatrix}.
+\]
+
+La connaissance de ce gradient permet de comparer les dérivées de la solution approchée à celles de la solution exacte.
+
+## 3. Méthode numérique
+
+### 3.1 Maillage
+
+Le carré unité est subdivisé en rectangles, chacun étant découpé en deux triangles.
+
+Pour un maillage carré :
+
+\[
+n_x=n_y=n.
+\]
+
+Le pas directionnel est :
+
+\[
+h=\frac{1}{n}.
 \]
 
 Le nombre de nœuds est :
 
 \[
-N_{\text{nœuds}} = (n+1)^2.
+N=(n+1)^2.
 \]
 
 Le nombre de triangles est :
 
 \[
-N_{\text{triangles}} = 2n^2.
+N_T=2n^2.
 \]
 
-La formulation variationnelle du problème consiste à chercher \(u_h \in V_h\) telle que :
+Le diamètre maximal des triangles vaut ici \(\sqrt{2}/n\). Le choix du paramètre \(h=1/n\) conserve les mêmes ordres de convergence.
+
+### 3.2 Formulation variationnelle
+
+On cherche \(u\in H_0^1(\Omega)\) telle que :
 
 \[
-\int_\Omega \nabla u_h \cdot \nabla v_h \, dx
+\int_\Omega \nabla u\cdot\nabla v\,d\Omega
 =
-\int_\Omega f v_h \, dx,
+\int_\Omega fv\,d\Omega
+\qquad
+\forall v\in H_0^1(\Omega).
 \]
 
-pour toute fonction test \(v_h \in V_h\).
+### 3.3 Approximation P1
 
-Avec des éléments finis \(P_1\), la solution approchée s’écrit :
+La solution approchée s’écrit :
 
 \[
-u_h(x,y) = \sum_{i=1}^{N} U_i \phi_i(x,y),
+u_h(x,y)=\sum_{j=1}^{N}U_j\phi_j(x,y),
 \]
 
-où \(\phi_i\) sont les fonctions de base associées aux sommets du maillage.
+où :
 
-Le système linéaire obtenu est :
+- \(U_j\) est la valeur approchée au nœud \(j\) ;
+- \(\phi_j\) est une fonction de base affine par triangle.
+
+L’assemblage conduit au système :
 
 \[
-A U = b.
+AU=b.
 \]
 
-La matrice \(A\) est la matrice de rigidité globale. Elle est symétrique, creuse et définie positive après application des conditions de Dirichlet.
+Les coefficients de rigidité sont :
 
-## Arborescence du projet
+\[
+A_{ij}
+=
+\int_\Omega \nabla\phi_j\cdot\nabla\phi_i\,d\Omega.
+\]
+
+Le second membre est :
+
+\[
+b_i=\int_\Omega f\phi_i\,d\Omega.
+\]
+
+### 3.4 Assemblage élémentaire
+
+Pour un triangle \(K\), les gradients des fonctions de base P1 sont constants :
+
+\[
+A_{ij}^{K}
+=
+|K|\,\nabla\phi_j\cdot\nabla\phi_i.
+\]
+
+Dans la version initiale du code, le second membre est approché au barycentre :
+
+\[
+b_i^K
+\approx
+\frac{|K|}{3}f(x_K,y_K).
+\]
+
+Cette quadrature est une approximation pour le second membre trigonométrique utilisé.
+
+### 3.5 Conditions de Dirichlet
+
+La version initiale impose les valeurs nulles au bord en :
+
+1. annulant les lignes associées aux nœuds de bord ;
+2. plaçant 1 sur leur diagonale ;
+3. plaçant 0 dans le second membre correspondant.
+
+Attention : cette modification des lignes seules ne conserve généralement pas la symétrie de la matrice globale.
+
+La matrice de rigidité est structurellement creuse, mais l’implémentation actuelle la stocke dans un tableau dense.
+
+## 4. Arborescence du dépôt
 
 ```text
-Poisson2D_Fortran/
-├── README.md
-├── Makefile
+Poisson2D/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml
+│
 ├── .gitignore
-├── main.f90
-├── params_module.f90
-├── mesh_module.f90
-├── exact_solution_module.f90
-├── fem_module.f90
-├── solver_module.f90
-├── error_module.f90
-├── plot_solution_convergence.py
-├── bin/
-│   └── poisson2d
-└── results/
-    ├── solution.dat
-    ├── error_convergence.dat
-    ├── solution.png
-    └── log_convergence.png
+│
+└── Poisson2D_P1_Fortran/
+    ├── README.md
+    ├── Makefile
+    ├── main.f90
+    ├── params_module.f90
+    ├── mesh_module.f90
+    ├── exact_solution_module.f90
+    ├── fem_module.f90
+    ├── solver_module.f90
+    ├── error_module.f90
+    ├── plot_solution.py
+    ├── bin/
+    │   └── poisson2d
+    └── results/
+        ├── solution.dat
+        ├── error_convergence.dat
+        ├── solution.png
+        └── log_convergence.png
 ```
 
-## Rôle de chaque fichier
+Les dossiers `bin/` et `results/` contiennent des fichiers générés.
+
+## 5. Description des fichiers
 
 | Fichier | Rôle |
 |---|---|
-| `README.md` | Documentation complète du projet |
-| `Makefile` | Automatise la compilation, l’exécution, l’étude de convergence et le nettoyage |
-| `.gitignore` | Ignore les fichiers générés automatiquement, tels que les fichiers binaires, `.mod`, `.o` et les résultats |
-| `main.f90` | Programme principal : lit les paramètres, construit le maillage, assemble et résout le système, calcule les erreurs et écrit les résultats |
-| `params_module.f90` | Définit les paramètres du problème : dimensions du maillage, dimensions du domaine, nombre de nœuds, triangles et degrés de liberté |
-| `mesh_module.f90` | Construit les nœuds, les triangles et la liste des nœuds situés sur la frontière |
-| `exact_solution_module.f90` | Fournit la solution exacte, le second membre \(f\) et le gradient exact de la solution |
-| `fem_module.f90` | Assemble la matrice de rigidité globale, le second membre global et applique les conditions de Dirichlet |
-| `solver_module.f90` | Résout le système linéaire \(A U = b\) à l’aide de LAPACK |
-| `error_module.f90` | Calcule les erreurs en normes \(L^2\), \(H^1\) et \(L^\infty\) |
-| `plot_solution_convergence.py` | Visualise la solution et trace la convergence logarithmique des erreurs |
+| `README.md` | Documentation du projet et des procédures |
+| `Makefile` | Compilation, exécution selon les cibles définies et nettoyage |
+| `.gitignore` | Exclusion des fichiers générés du suivi Git |
+| `params_module.f90` | Paramètres numériques et dimensions |
+| `mesh_module.f90` | Coordonnées, connectivité et frontière |
+| `exact_solution_module.f90` | Solution exacte, source et gradient exact |
+| `fem_module.f90` | Assemblage et conditions de Dirichlet |
+| `solver_module.f90` | Résolution du système avec LAPACK |
+| `error_module.f90` | Mesures d’erreur |
+| `main.f90` | Orchestration du calcul |
+| `plot_solution.py` | Lecture des résultats et génération des figures |
+| `.github/workflows/ci-cd.yml` | Automatisation GitHub Actions |
 
-## Description détaillée des modules Fortran
+### 5.1 `params_module.f90`
 
-### `params_module.f90`
-
-Ce module contient les paramètres globaux du problème.
-
-Il définit notamment :
-
-- la précision des réels : `dp = kind(1.0d0)` ;
-- le nombre de subdivisions selon \(x\) et \(y\) : `nx` et `ny` ;
-- les dimensions du domaine : `lx` et `ly` ;
-- le nombre de nœuds : `n_nodes` ;
-- le nombre de triangles : `n_elements` ;
-- le nombre de degrés de liberté : `n_dof`.
-
-La subroutine principale est :
+Ce module contient notamment :
 
 ```fortran
-call set_parameters(nx, ny)
+dp
+nx
+ny
+lx
+ly
+n_nodes
+n_elements
+n_dof
 ```
 
-Elle initialise tous les paramètres nécessaires à la construction du maillage et à la résolution du problème.
-
-### `mesh_module.f90`
-
-Ce module construit le maillage triangulaire structuré du carré unité.
-
-Il fournit :
-
-- les coordonnées des nœuds dans le tableau `nodes` ;
-- la connectivité des triangles dans le tableau `elements` ;
-- la liste des nœuds de bord dans le tableau `boundary_nodes`.
-
-La subroutine principale est :
+La procédure :
 
 ```fortran
-call build_mesh()
+call set_parameters(n, n)
 ```
 
-Elle construit :
+initialise les paramètres du maillage carré.
 
-1. les coordonnées des nœuds ;
-2. les triangles ;
-3. les nœuds situés sur la frontière.
+### 5.2 `mesh_module.f90`
 
-Les nœuds sont numérotés ligne par ligne. Pour un nœud d’indices \((i,j)\), son numéro global est :
+Les principaux tableaux sont :
 
-\[
-\text{index} = j(n+1) + i + 1.
-\]
+```fortran
+nodes(2, n_nodes)
+elements(3, n_elements)
+boundary_nodes(n_boundary_nodes)
+```
 
-### `exact_solution_module.f90`
+Ils contiennent respectivement :
 
-Ce module contient les données analytiques du problème.
+- les coordonnées ;
+- les trois sommets de chaque triangle ;
+- les numéros des nœuds de bord.
 
-Il fournit :
+Les principales procédures sont :
 
-- la solution exacte :
+```fortran
+build_mesh()
+node_index(i, j)
+build_boundary()
+```
 
-\[
-u(x,y) = \sin(\pi x)\sin(\pi y);
-\]
+### 5.3 `exact_solution_module.f90`
 
-- le second membre :
+Ce module fournit :
 
-\[
-f(x,y) = 2\pi^2\sin(\pi x)\sin(\pi y);
-\]
+```fortran
+exact_solution(x, y)
+source_term(x, y)
+exact_gradient(x, y, grad_u)
+```
 
-- le gradient exact :
+Ces fonctions définissent les données analytiques nécessaires à l’assemblage et à la comparaison des résultats.
 
-\[
-\nabla u =
-\begin{pmatrix}
-\pi\cos(\pi x)\sin(\pi y) \\
-\pi\sin(\pi x)\cos(\pi y)
-\end{pmatrix}.
-\]
+### 5.4 `fem_module.f90`
 
-Le gradient exact est utilisé pour calculer l’erreur en norme \(H^1\).
+Les tableaux principaux sont :
 
-### `fem_module.f90`
+```fortran
+global_matrix
+rhs
+```
 
-Ce module construit le système linéaire éléments finis.
-
-Pour chaque triangle \(K\), il calcule :
-
-- la matrice élémentaire de rigidité :
-
-\[
-A^K_{ij}
-=
-\int_K \nabla\phi_i \cdot \nabla\phi_j \, dx;
-\]
-
-- le second membre élémentaire :
-
-\[
-b^K_i
-=
-\int_K f\phi_i \, dx.
-\]
-
-Ces contributions sont ensuite assemblées dans la matrice globale \(A\) et le vecteur global \(b\).
-
-La subroutine principale est :
+La procédure :
 
 ```fortran
 call assemble_system()
 ```
 
-Elle réalise les étapes suivantes :
+réalise :
 
-1. initialisation de la matrice et du second membre ;
-2. parcours de tous les triangles ;
-3. calcul des matrices élémentaires ;
-4. assemblage global ;
-5. application des conditions de Dirichlet.
+1. l’allocation et l’initialisation ;
+2. le parcours des triangles ;
+3. le calcul des contributions locales ;
+4. l’assemblage ;
+5. l’application des conditions de Dirichlet.
 
-Les conditions de Dirichlet homogènes sont appliquées en annulant les lignes correspondant aux nœuds de bord, en plaçant 1 sur la diagonale et en mettant le second membre associé à zéro.
+### 5.5 `solver_module.f90`
 
-### `solver_module.f90`
-
-Ce module résout le système linéaire :
-
-\[
-A U = b.
-\]
-
-Il utilise la routine LAPACK `dgesv`, qui résout un système linéaire dense en double précision par factorisation \(LU\) avec pivotage partiel.
-
-La subroutine principale est :
+La procédure :
 
 ```fortran
 call solve_linear_system(global_matrix, rhs, solution)
 ```
 
-Après l’appel, le tableau `solution` contient les valeurs de la solution approchée aux nœuds du maillage.
+Résoudre du système dense par la factorisation LU.
 
-### `error_module.f90`
 
-Ce module calcule l’erreur entre la solution numérique \(u_h\) et la solution exacte \(u\).
+### 5.6 `error_module.f90`
 
-Trois normes sont calculées :
-
-- la norme \(L^2\) :
-
-\[
-\|u-u_h\|_{L^2};
-\]
-
-- la norme \(H^1\) :
-
-\[
-\|u-u_h\|_{H^1};
-\]
-
-- la norme \(L^\infty\) :
-
-\[
-\|u-u_h\|_{L^\infty}.
-\]
-
-La subroutine principale est :
+L’appel est :
 
 ```fortran
 call compute_errors(solution, error_l2, error_h1, error_linf)
 ```
 
-Les erreurs sont calculées triangle par triangle, puis assemblées globalement.
+Les sorties sont utilisées dans le tableau de convergence.
 
-### `main.f90`
+Leur interprétation doit correspondre à l’implémentation :
 
-Le programme principal orchestre toutes les étapes de la résolution.
+- `error_l2` : estimation de l’erreur L2 ;
+- `error_h1` : erreur de gradient ou norme H1 selon le calcul retenu ;
+- `error_linf` : maximum échantillonné dans la version initiale.
 
-Il réalise successivement :
+### 5.7 `main.f90`
 
-1. la lecture du paramètre \(n\) depuis la ligne de commande ;
-2. l’initialisation des paramètres ;
-3. la construction du maillage ;
-4. l’assemblage du système linéaire ;
-5. la résolution du système ;
-6. le calcul des erreurs ;
-7. l’écriture de la solution dans `results/solution.dat` ;
-8. l’ajout des erreurs dans `results/error_convergence.dat` ;
-9. l’affichage des résultats dans le terminal.
+Le programme principal :
 
-Le maillage est carré :
+1. lit le paramètre `n` ;
+2. initialise le problème ;
+3. construit le maillage ;
+4. assemble le système ;
+5. résout ;
+6. calcule les erreurs ;
+7. écrit la solution ;
+8. ajoute une ligne au tableau de convergence ;
+9. affiche les informations dans le terminal.
 
-\[
-nx = ny = n.
-\]
+### 5.8 `plot_solution.py`
 
-Le pas du maillage est :
+| Fonction | Rôle |
+|---|---|
+| `read_table` | Lire et vérifier un tableau |
+| `read_solution` | Extraire les coordonnées et les solutions |
+| `detect_mesh` | Déterminer les dimensions et vérifier la numérotation |
+| `build_triangulation` | Reconstruire les triangles |
+| `save_figure` | Sauvegarder et contrôler l’image |
+| `plot_solution` | Construire la figure 1 |
+| `read_convergence_data` | Lire et trier les mesures d’erreur |
+| `plot_log_convergence` | Construire la figure 2 |
+| `main` | Coordonner les opérations |
 
-\[
-h = \frac{1}{n}.
-\]
+Les chemins sont construits depuis le dossier du script, et non depuis le répertoire courant du terminal.
 
-## Installation des dépendances pour la compilation du projet
+## 6. Installation - Dépendances système
 
 ```bash
 sudo apt update
-sudo apt install gfortran liblapack-dev libblas-dev python3 python3-pip
-pip install numpy matplotlib
+
+sudo apt install -y \
+    git \
+    gfortran \
+    liblapack-dev \
+    python3 
 ```
 
-## Compilation du projet
+## 7. Compilation et exécution
 
-Place-toi dans le dossier du projet, Puis compile :
+### 7.1 Compilation
+
+Depuis `Poisson2D_P1_Fortran/` :
 
 ```bash
 make
 ```
 
-Cette commande crée l’exécutable :
+L’exécutable attendu est :
 
 ```text
 bin/poisson2d
 ```
 
-## Exécution du programme
-
-Pour exécuter le programme avec un maillage \(20 \times 20\) :
-
-```bash
-make run
-```
-
-Tu peux aussi exécuter directement l’exécutable :
+### 7.2 Exécution pour un maillage
 
 ```bash
 mkdir -p results
 ./bin/poisson2d 20
 ```
 
-Le paramètre `20` correspond au nombre de subdivisions du maillage selon \(x\) et \(y\).
+Pour fixer les paramètres :
 
-## Étude de convergence
+\[
+n_x=n_y=20.
+\]
 
-Pour étudier l’effet de la finesse du maillage sur l’erreur, exécute :
+La commande directe ci-dessus est la référence pour lancer un maillage précis. Le comportement de `make run` dépend des commandes présentes dans la cible `run` du Makefile.
+
+### 7.3 Compilation depuis la racine du dépôt
+
+Depuis `Poisson2D/` :
 
 ```bash
-make convergence
+make -C Poisson2D_P1_Fortran
 ```
 
-Cette commande teste automatiquement plusieurs maillages :
+### 7.4 Ordre des sources
+
+Les modules doivent être compilés avant les sources qui les utilisent.
+
+Ordre utilisé :
 
 ```text
-n = 2
-n = 5
-n = 10
-n = 20
-n = 40
-n = 80
-n = 160
-n = 320
+params_module.f90
+mesh_module.f90
+exact_solution_module.f90
+fem_module.f90
+solver_module.f90
+error_module.f90
+main.f90
 ```
 
-Pour chaque maillage, le programme :
+## 8. Étude de la convergence
 
-- construit un maillage plus fin ;
-- résout le problème ;
-- calcule les erreurs ;
-- ajoute une ligne dans `results/error_convergence.dat`.
+### 8.1 Maillages retenus pour la CI
 
-Le fichier `error_convergence.dat` contient les colonnes suivantes :
+L’automatisation utilise sept maillages :
+
+```text
+n = 2, 4, 6, 8, 10, 15, 20
+```
+
+| n | h | Nœuds | Triangles |
+|---:|---:|---:|---:|
+| 2 | 0.5 | 9 | 8 |
+| 4 | 0.25 | 25 | 32 |
+| 6 | 0.166667 | 49 | 72 |
+| 8 | 0.125 | 81 | 128 |
+| 10 | 0.1 | 121 | 200 |
+| 15 | 0.066667 | 256 | 450 |
+| 20 | 0.05 | 441 | 800 |
+
+### 8.3 Enregistrement des erreurs
+
+Le fichier :
+
+```text
+results/error_convergence.dat
+```
+
+contient :
 
 ```text
 n   h   erreur_L2   erreur_H1   erreur_Linf
 ```
 
-## Visualisation des résultats
+Le programme doit ajouter une ligne à chaque lancement :
 
-Après avoir exécuté le programme Fortran, lance le script Python :
+```fortran
+open(newunit=unit_out, file="results/error_convergence.dat", &
+     status="unknown", position="append")
 
-```bash
-python3 plot_solution_convergence.py
+write(unit_out, *) n, 1.0_dp / real(n, dp), &
+     error_l2, error_h1, error_linf
+
+close(unit_out)
 ```
 
-Ce script génère deux figures :
+### 8.4 Enregistrement de la solution
+
+Le fichier :
+
+```text
+results/solution.dat
+```
+
+contient :
+
+```text
+x   y   u_numerique   u_exacte
+```
+
+Il est remplacé à chaque lancement et correspond donc au dernier maillage calculé.
+
+## 9. Visualisation
+
+### 9.1 Lancement
+
+```bash
+python plot_solution.py
+```
+
+### 9.2 Mode sans fenêtre
+
+```bash
+MPLBACKEND=Agg python plot_solution.py
+```
+
+Ce mode est utilisé dans GitHub Actions.
+
+### 9.3 Figure 1 : solutions
+
+Fichier :
+
+```text
+results/solution.png
+```
+
+La figure contient :
+
+- à gauche : la solution approchée ;
+- à droite : les valeurs de la solution exacte.
+
+### 9.4 Figure 2 : logarithmes des erreurs
+
+Fichier :
+
+```text
+results/log_convergence.png
+```
+
+Les courbes représentent :
+
+\[
+\log(erreur)
+ \;\ \text{en fonction de} \;\
+\log(h).
+\]
+
+## 10. Résultats et interprétation
+
+### 10.1 Résultats disponibles
+
+Les résultats numériques effectivement calculés se trouvent dans :
+
+```text
+results/error_convergence.dat
+```
+
+Les images sont :
 
 ```text
 results/solution.png
 results/log_convergence.png
 ```
 
-### Figure 1 : solution approchée et solution exacte
+Après une exécution GitHub Actions ayant atteint l’archivage, ces fichiers sont disponibles dans l’artefact `poisson2d-results`.
 
-La première figure contient deux sous-graphiques :
+### 10.2 Résultats théoriques de référence
 
-- à gauche, la solution approchée \(u_h\) ;
-- à droite, la solution exacte \(u\).
-
-Les deux solutions sont représentées en couleur à l’aide de la colormap `viridis`. Les arêtes du maillage triangulaire sont également affichées.
-
-### Figure 2 : convergence logarithmique
-
-La deuxième figure trace :
+Pour le problème régulier considéré, les estimations usuelles d’une approximation P1 correctement mise en œuvre donnent :
 
 \[
-\log(\text{erreur})
-\quad \text{en fonction de} \quad
-\log(h).
-\]
-
-Elle contient les courbes suivantes :
-
-- \(\log(\|u-u_h\|_{L^2})\) ;
-- \(\log(\|u-u_h\|_{H^1})\) ;
-- \(\log(\|u-u_h\|_{L^\infty})\) ;
-- une droite de référence de pente 2 ;
-- une droite de référence de pente 1.
-
-## Résultats attendus
-
-Pour une méthode éléments finis \(P_1\), on attend théoriquement :
-
-\[
-\|u-u_h\|_{L^2} \approx C h^2,
+\|u-u_h\|_{L^2(\Omega)}=O(h^2),
 \]
 
 \[
-\|u-u_h\|_{H^1} \approx C h.
+|u-u_h|_{H^1(\Omega)}=O(h).
 \]
 
-Ainsi, lorsque le maillage est raffiné, c’est-à-dire lorsque \(h\) diminue, l’erreur doit diminuer.
+### 10.3 Ordre expérimental
 
-| Maillage | Pas \(h\) | Comportement attendu |
-|---:|---:|---|
-| \(2 \times 2\) | 0.5 | Erreur élevée |
-| \(5 \times 5\) | 0.2 | Erreur plus faible |
-| \(10 \times 10\) | 0.1 | Erreur encore plus faible |
-| \(20 \times 20\) | 0.05 | Erreur nettement réduite |
-| \(40 \times 40\) | 0.025 | Erreur très faible |
-| \(80 \times 80\) | 0.0125 | Erreur très petite |
-| \(160 \times 160\) | 0.00625 | Convergence visible |
-| \(320 \times 320\) | 0.003125 | Erreur minimale |
-
-## Interprétation des résultats
-
-Les résultats obtenus doivent montrer que :
-
-- plus le maillage est fin, plus l’erreur est faible ;
-- l’erreur en norme \(L^2\) décroît approximativement comme \(h^2\) ;
-- l’erreur en norme \(H^1\) décroît approximativement comme \(h\) ;
-- la solution approchée se rapproche visuellement de la solution exacte lorsque le maillage est raffiné ;
-- la méthode éléments finis \(P_1\) converge donc vers la solution exacte.
-
-Sur le graphique logarithmique, la pente de la courbe donne l’ordre de convergence :
+Pour deux mesures :
 
 \[
-p = \frac{\log(E_2) - \log(E_1)}
-{\log(h_2) - \log(h_1)}.
+p=
+\frac{\log(E_2/E_1)}
+{\log(h_2/h_1)}.
 \]
 
-Pour la norme \(L^2\), la pente attendue est proche de 2.  
-Pour la norme \(H^1\), la pente attendue est proche de 1.
+Si :
 
-## Nettoyage du projet
+\[
+E(h)\approx Ch^p,
+\]
 
-Pour supprimer les fichiers générés par la compilation et l’exécution :
+alors :
+
+\[
+\log(E(h))\approx\log(C)+p\log(h).
+\]
+
+La pente du graphique fournit donc une estimation de l’ordre.
+
+## 11. Pipeline CI/CD
+
+### 11.1 Objectif
+
+Le pipeline automatise la chaîne :
+
+```text
+Récupération du dépôt
+        ↓
+Vérification des sources
+        ↓
+Installation des dépendances
+        ↓
+Compilation Fortran
+        ↓
+Exécution de sept maillages
+        ↓
+Contrôle des données
+        ↓
+Génération des figures
+        ↓
+Contrôle des images
+        ↓
+Archivage des résultats
+        ↓
+Release si push d'un tag v*
+```
+
+La partie publication distribue les résultats. Elle ne déploie pas une application web ou un service.
+
+### 11.2 Emplacement
+
+Le fichier est :
+
+```text
+.github/workflows/ci-cd.yml
+```
+
+à la racine du dépôt.
+
+### 11.3 Déclencheurs
+
+| Événement | Calcul et contrôles | Release |
+|---|---|---|
+| Push sur `main` | Oui | Non |
+| Pull request vers `main` | Oui | Non |
+| Lancement manuel | Oui | Non |
+| Push d’un tag `v*` | Oui | Oui après réussite |
+
+### 11.4 Jobs
+
+Le workflow contient deux jobs :
+
+- `build-test-visualize` : compile, exécute, vérifie et archive ;
+- `release` : télécharge les résultats puis les publie.
+
+Le second dépend de la réussite du premier.
+
+### 11.5 Portée des contrôles
+
+Le pipeline vérifie :
+
+- les sources attendues ;
+- la compilation ;
+- l’exécutable ;
+- les sept exécutions ;
+- les dimensions des tableaux ;
+- l’absence de NaN et d’infinis ;
+- la positivité nécessaire aux logarithmes ;
+- la correspondance entre les subdivisions et les pas ;
+- la création et la lisibilité des figures.
+
+Il ne valide pas encore automatiquement les pentes théoriques.
+
+## 12. Récupération des résultats dans l'artefact
+
+### 12.1 Où sont les résultats ?
+
+Après une exécution locale :
+
+```text
+Poisson2D_P1_Fortran/results/
+```
+
+Après une exécution CI, les fichiers sont produits sur le runner GitHub, puis archivés sous le nom :
+
+```text
+poisson2d-results
+```
+
+### 12.2 Contenu
+
+L’archive contient :
+
+```text
+solution.dat
+error_convergence.dat
+solution.png
+log_convergence.png
+```
+
+L’exécutable Fortran n’est pas inclus dans l’artefact actuel.
+
+## 16. Publication d’une release
+
+### 16.1 Créer un tag
+
+Depuis la racine du dépôt :
+
+```bash
+git switch main
+git pull --ff-only origin main
+```
+
+Créer un nouveau tag :
+
+```bash
+git tag -a v1.0.0 \
+    -m "Solveur Poisson 2D P1 avec chaîne CI/CD"
+
+git push origin v1.0.0
+```
+
+Si ce tag existe déjà, choisir une nouvelle version.
+
+## 13. Nettoyage et versionnement
+
+### 13.1 Nettoyage
+
+Depuis le dossier du solveur :
 
 ```bash
 make clean
 ```
 
-Cette commande supprime :
+La cible utilisée supprime notamment :
 
 ```text
 bin/
@@ -505,19 +777,46 @@ results/*.dat
 results/*.png
 ```
 
+Attention : les résultats locaux sont supprimés. Les sauvegarder avant nettoyage.
 
-## Conclusion
+### 13.2 Fichiers à ignorer
 
-Ce projet met en œuvre une méthode éléments finis \(P_1\) pour résoudre l’équation de Poisson 2D avec second membre non nul et conditions de Dirichlet homogènes.
+Exemple de `.gitignore` à la racine :
 
-Le code est organisé en modules afin de séparer clairement :
+```gitignore
+# Compilation
+*.mod
+*.o
+Poisson2D_P1_Fortran/bin/
 
-- les paramètres du problème ;
-- la construction du maillage ;
-- la solution exacte ;
-- l’assemblage éléments finis ;
-- la résolution du système linéaire ;
-- le calcul des erreurs ;
-- la visualisation des résultats.
+# Résultats générés
+Poisson2D_P1_Fortran/results/*.dat
+Poisson2D_P1_Fortran/results/*.png
 
-L’étude de la convergence permet de vérifier numériquement que plus le maillage est fin, plus l’erreur diminue. Les résultats obtenus confirment le comportement théorique attendu de la méthode éléments finis \(P_1\) : convergence d’ordre 2 en norme \(L^2\) et d’ordre 1 en norme \(H^1\).
+# Python
+Poisson2D_P1_Fortran/.venv/
+__pycache__/
+*.pyc
+```
+
+Les fichiers ignorés par Git peuvent tout de même être archivés par GitHub Actions.
+
+Ajouter une règle ne retire pas automatiquement les fichiers déjà suivis.
+
+### 13.3 Travail par branche
+
+Le dépôt existe déjà : ne pas exécuter un nouveau `git init` dans le sous-dossier du solveur.
+
+Exemple :
+
+```bash
+git switch -c docs/project-readme
+
+git add Poisson2D_P1_Fortran/README.md
+git commit -m "docs: documenter le projet et le pipeline"
+
+git push -u origin docs/project-readme
+```
+
+Ouvrir ensuite une pull request vers `main`.
+
