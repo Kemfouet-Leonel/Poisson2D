@@ -1,0 +1,5 @@
+# Calcul numérique et manipulation des tableaux.
+numpy==2.2.6
+
+# Figures 2D, colormaps et visualisation des maillages triangulaires.
+matplotlib==3.10.3

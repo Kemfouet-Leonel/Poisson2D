@@ -1,41 +1,163 @@
+# Nom affiché dans l'onglet Actions du dépôt.
 name: Poisson P1 sparse validation
+
+# Événements déclenchant le workflow.
 on:
   push:
-    branches: 
+    # Lancer les vérifications à chaque push sur ces branches.
+    branches:
       - main
       - feature/poisson2d_v2
+
   pull_request:
-    branches: 
+    # Pour une pull request, ce filtre concerne la branche de destination.
+    branches:
       - main
       - feature/poisson2d_v2
+
+  # Permettre un lancement manuel depuis l'interface GitHub.
   workflow_dispatch:
+
+# Autoriser la lecture du dépôt sans donner le droit de le modifier.
 permissions:
   contents: read
+
 jobs:
   scientific-tests:
+    name: Tests scientifiques et visualisation
+
+    # Exécuter le job sur une machine virtuelle Linux fournie par GitHub.
     runs-on: ubuntu-latest
+
+    # Limiter la durée totale du job.
     timeout-minutes: 20
+
     defaults:
       run:
+        # Utiliser Bash pour les commandes des étapes run.
+        shell: bash
+
+        # Exécuter ces commandes depuis le dossier du projet Fortran.
+        # Ce réglage ne s'applique pas aux étapes utilisant uses.
         working-directory: Poisson2D_P1_Fortran_v2
+
     env:
+      # Produire les images sans interface graphique sur le runner.
       MPLBACKEND: Agg
+
+      # Limiter les bibliothèques concernées à un seul thread.
+      # Ces variables ne rendent pas le solveur Fortran parallèle.
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
+
     steps:
-      - uses: actions/checkout@v5
-      - run: sudo apt-get update && sudo apt-get install -y gfortran make
-      - uses: actions/setup-python@v6
+      # Récupérer les fichiers du commit associé à cette exécution.
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v5
+
+      # Vérifier les entrées nécessaires avant les installations et les calculs.
+      # test -s échoue si un fichier est absent ou vide.
+      - name: Vérifier les fichiers du projet
+        run: |
+          test -s Makefile
+          test -s requirements.txt
+          test -s tests/unit.f90
+          test -s python/plot_results.py
+
+      # Installer les dépendances système, non gérées par pip.
+      - name: Installer Fortran et Make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran make
+
+      # Configurer Python et le cache de téléchargement des dépendances.
+      - name: Configurer Python
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: python -m pip install numpy==2.2.6 matplotlib==3.10.3
-      - name: Tests unitaires en mode diagnostic
-        run: make test
-      - name: Compiler le solveur optimise
-        run: make
+
+          # Réutiliser le cache pip pour accélérer les installations.
+          cache: pip
+
+          # Chemin depuis la racine du dépôt, car il s'agit d'une action uses.
+          # Le contenu du fichier participe à la clé du cache.
+          cache-dependency-path: Poisson2D_P1_Fortran_v2/requirements.txt
+
+      # Installer les dépendances déclarées dans le fichier du projet.
+      # Cette étape reste nécessaire même si le cache pip a été restauré.
+      - name: Installer les dépendances Python
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      # Supprimer les anciennes compilations puis lancer les tests Fortran.
+      # La cible test doit contenir les tests unitaires et de convergence.
+      - name: Tests Fortran en mode diagnostic
+        run: |
+          make clean
+          make test
+
+      # Le test_analysis.py précédent importe observed_orders depuis study.py.
+      # Comme study.py a été supprimé, vérifier ici uniquement la syntaxe
+      # du nouveau script, sans présenter cela comme un test scientifique.
+      - name: Vérifier la syntaxe du script Python
+        run: python -m py_compile python/plot_results.py
+
+      # Compiler le programme principal avec les options optimisées du Makefile.
+      - name: Compiler le solveur optimisé
+        run: |
+          make
+          test -x bin/poisson2d
+
+      # Le script lance le solveur, affiche les erreurs dans les journaux,
+      # écrit convergence.csv et sauvegarde les deux figures.
+      # --no-show empêche l'ouverture de fenêtres sur le runner.
+      - name: Calculs et figures du cas trigonométrique
+        run: |
+          python python/plot_results.py \
+            --case 1 \
+            --meshes 8 16 32 64 \
+            --no-show
+
+      - name: Calculs et figures du cas polynomial
+        run: |
+          python python/plot_results.py \
+            --case 2 \
+            --meshes 8 16 32 64 \
+            --no-show
+
+      # Vérifier les fichiers produits par le dernier plot_results.py.
+      - name: Vérifier les tableaux et les figures
+        run: |
+          for c in 1 2; do
+            for f in convergence.csv solutions_2d.png log_erreurs.png; do
+              file="results/visualisation/case_${c}/${f}"
+
+              if [ ! -s "$file" ]; then
+                echo "::error::Fichier absent ou vide : $file"
+                exit 1
+              fi
+            done
+          done
+
+      # Étape séparée de la compilation : ne pas mélanger run et uses.
+      - name: Archiver les résultats disponibles
+
+        # Tenter l'archivage même après l'échec d'une étape précédente.
+        # L'artefact peut donc contenir des résultats partiels.
+        if: always()
+
         uses: actions/upload-artifact@v4
         with:
           name: poisson2d-v2-validation
+
+          # Chemin depuis la racine du dépôt.
+          # defaults.run.working-directory ne s'applique pas à cette action.
           path: Poisson2D_P1_Fortran_v2/results/
+
+          # Si aucun calcul n'a produit de résultat, émettre un avertissement.
+          # Cela ne masque pas l'échec des étapes précédentes.
           if-no-files-found: warn
+
+          # Durée de conservation demandée, en jours.
           retention-days: 14
