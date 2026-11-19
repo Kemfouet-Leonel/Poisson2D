@@ -1,0 +1,7 @@
+bin/
+build/
+results/
+.venv/
+__pycache__/
+*.mod
+*.o
