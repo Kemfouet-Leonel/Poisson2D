@@ -1,59 +1,80 @@
 #!/usr/bin/env python3
+"""
+Visualisation et étude des erreurs du solveur Poisson 2D.
+
+Le script :
+    1. lance le solveur Fortran sur plusieurs maillages ;
+    2. lit les erreurs dans les fichiers metrics.csv ;
+    3. affiche les erreurs dans le terminal ;
+    4. enregistre un tableau de convergence CSV ;
+    5. affiche deux fenêtres :
+       - solutions approchée et exacte en cartes de couleurs 2D ;
+       - logarithmes des erreurs en fonction de log(h).
+
+Aucun fichier JSON n'est utilisé.
+
+Exemple :
+    python3 python/plot_results.py --case 1
+
+Maillages personnalisés :
+    python3 python/plot_results.py --case 1 --meshes 8 16 32 64 128
+"""
+
 # =============================================================================
-# Script : python/plot_results.py
-#
-# Figure 1 :
-#   Comparaison entre la solution approchée et la solution exacte aux nœuds.
-#
-# Figure 2 :
-#   Logarithmes naturels des erreurs en fonction de log(h).
-#
-# Données utilisées :
-#   results/convergence.csv
-#   results/solution.dat
+# 1. Importer les bibliothèques
 # =============================================================================
 
 from pathlib import Path
 import argparse
 import csv
+import subprocess
 
 import numpy as np
 import matplotlib
 
-# Lire les arguments avant de charger pyplot pour pouvoir choisir
-# un backend sans interface graphique avec --no-show.
+
+# =============================================================================
+# 2. Lire les paramètres du terminal
+# =============================================================================
+
 parser = argparse.ArgumentParser(
-    description="Tracer les solutions et la convergence de Poisson 2D."
+    description="Visualisation et convergence de Poisson 2D."
 )
 
 parser.add_argument(
     "--case",
-    dest="case_id",
     type=int,
     choices=[1, 2],
     default=1,
-    help="Cas manufacturé à représenter : 1 ou 2."
+    help="1 : solution trigonométrique ; 2 : solution polynomiale."
 )
 
 parser.add_argument(
-    "--solution",
-    type=Path,
-    default=None,
-    help=(
-        "Fichier solution.dat à utiliser pour la figure 1. "
-        "Par défaut : dernière répétition du maillage le plus fin "
-        "présent dans convergence.csv."
-    )
+    "--meshes",
+    type=int,
+    nargs="+",
+    default=[8, 16, 32, 64],
+    help="Nombres de subdivisions dans chaque direction."
 )
 
 parser.add_argument(
     "--no-show",
     action="store_true",
-    help="Enregistrer les figures sans ouvrir de fenêtres."
+    help="Enregistrer les images sans ouvrir les fenêtres."
 )
 
 args = parser.parse_args()
 
+# Il faut plusieurs maillages distincts pour étudier la convergence.
+meshes = sorted(set(args.meshes))
+
+if len(meshes) < 2:
+    parser.error("Indiquer au moins deux maillages distincts.")
+
+if min(meshes) < 2 or max(meshes) > 4096:
+    parser.error("Les subdivisions doivent être comprises entre 2 et 4096.")
+
+# Choisir un backend sans fenêtre uniquement si demandé.
 if args.no_show:
     matplotlib.use("Agg")
 
@@ -61,404 +82,501 @@ import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
 
 
-# Racine du projet, indépendante du dossier de lancement.
+# =============================================================================
+# 3. Définir les chemins du projet
+# =============================================================================
+
 ROOT = Path(__file__).resolve().parents[1]
 
+EXECUTABLE = ROOT / "bin" / "poisson2d"
 
-def read_convergence(path):
-    """
-    Lire le CSV produit par study.py.
+OUTPUT = (
+    ROOT
+    / "results"
+    / "visualisation"
+    / f"case_{args.case}"
+)
 
-    Les noms de colonnes évitent de dépendre de leur position.
-    Les lignes sont triées du maillage grossier au maillage fin.
-    """
-    path = Path(path)
+OUTPUT.mkdir(parents=True, exist_ok=True)
 
-    if not path.is_file():
+if not EXECUTABLE.is_file():
+    raise FileNotFoundError(
+        f"Exécutable absent : {EXECUTABLE}\n"
+        "Compiler d'abord le programme avec la commande make."
+    )
+
+
+# =============================================================================
+# 4. Définir la solution exacte
+# =============================================================================
+
+def exact_solution(x, y):
+    """Évaluer la solution exacte du cas choisi."""
+    if args.case == 1:
+        return np.sin(np.pi * x) * np.sin(np.pi * y)
+
+    return x * (1.0 - x) * y * (1.0 - y)
+
+
+# =============================================================================
+# 5. Lancer Fortran sur un maillage et lire ses résultats
+# =============================================================================
+
+def run_solver(n):
+    """Calculer une solution et retourner les mesures d'erreur."""
+    folder = OUTPUT / f"n{n}"
+    folder.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        str(EXECUTABLE),
+        str(n),
+        str(args.case),
+        str(folder)
+    ]
+
+    # Capturer la sortie pour garder le tableau du terminal lisible.
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True
+    )
+
+    # Conserver le journal de chaque calcul.
+    log_text = result.stdout + result.stderr
+
+    (folder / "run.log").write_text(
+        log_text,
+        encoding="utf-8"
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Échec du solveur pour n={n}.\n"
+            f"Consulter : {folder / 'run.log'}\n\n"
+            f"{log_text}"
+        )
+
+    metrics_file = folder / "metrics.csv"
+
+    if not metrics_file.is_file():
         raise FileNotFoundError(
-            f"Tableau de convergence introuvable : {path}\n"
-            "Exécuter d'abord python/study.py."
+            f"Le solveur n'a pas produit : {metrics_file}"
         )
 
-    with path.open(newline="") as stream:
-        rows = list(csv.DictReader(stream))
+    with metrics_file.open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        rows = list(reader)
 
-    if len(rows) < 2:
+    if len(rows) != 1:
         raise ValueError(
-            "Au moins deux maillages sont nécessaires "
-            "pour représenter une convergence."
+            f"Une ligne de mesures est attendue dans {metrics_file}."
         )
 
-    required = {
+    row = rows[0]
+
+    required = ("h", "l2", "h1_semi", "h1", "linf_sample")
+
+    for name in required:
+        if name not in row:
+            raise ValueError(
+                f"Colonne absente de {metrics_file.name} : {name}"
+            )
+
+    h = float(row["h"])
+
+    errors = np.array([
+        float(row["l2"]),
+        float(row["h1_semi"]),
+        float(row["h1"]),
+        float(row["linf_sample"])
+    ])
+
+    if not np.isfinite(h) or h <= 0:
+        raise ValueError(f"Pas invalide pour n={n}.")
+
+    if not np.isclose(h, 1.0 / n):
+        raise ValueError(f"Pas incompatible avec n={n}.")
+
+    if not np.isfinite(errors).all() or np.any(errors <= 0):
+        raise ValueError(
+            f"Erreurs non finies ou non positives pour n={n}."
+        )
+
+    # Le nombre de nœuds vaut (n+1)^2 pour le maillage du projet.
+    node_count = (n + 1) ** 2
+
+    return h, node_count, errors
+
+
+# =============================================================================
+# 6. Effectuer la campagne et afficher les normes dans le terminal
+# =============================================================================
+
+print()
+print(f"ÉTUDE DE CONVERGENCE — CAS {args.case}")
+print()
+print(
+    f"{'n':>6} "
+    f"{'Nœuds':>9} "
+    f"{'h':>12} "
+    f"{'Erreur L2':>15} "
+    f"{'Erreur H1 semi':>17} "
+    f"{'Erreur H1':>15} "
+    f"{'Linf échant.':>15}"
+)
+print("-" * 100)
+
+steps = []
+node_counts = []
+error_values = []
+
+for n in meshes:
+    h, node_count, errors = run_solver(n)
+
+    steps.append(h)
+    node_counts.append(node_count)
+    error_values.append(errors)
+
+    print(
+        f"{n:6d} "
+        f"{node_count:9d} "
+        f"{h:12.5e} "
+        f"{errors[0]:15.6e} "
+        f"{errors[1]:17.6e} "
+        f"{errors[2]:15.6e} "
+        f"{errors[3]:15.6e}",
+        flush=True
+    )
+
+print("-" * 100)
+print("Linf échant. = maximum échantillonné, non supremum certifié.")
+print()
+
+steps = np.asarray(steps)
+node_counts = np.asarray(node_counts)
+error_values = np.asarray(error_values)
+
+
+# =============================================================================
+# 7. Calculer et afficher les ordres expérimentaux
+# =============================================================================
+
+# Le premier maillage n'a pas de prédécesseur.
+orders = np.full_like(error_values, np.nan)
+
+orders[1:, :] = (
+    np.log(error_values[:-1, :] / error_values[1:, :])
+    / np.log(steps[:-1] / steps[1:])[:, None]
+)
+
+print("ORDRES EXPÉRIMENTAUX ENTRE MAILLAGES SUCCESSIFS")
+print()
+print(
+    f"{'Raffinement':>15} "
+    f"{'p L2':>12} "
+    f"{'p H1 semi':>12} "
+    f"{'p H1':>12} "
+    f"{'p Linf éch.':>14}"
+)
+print("-" * 70)
+
+for i in range(1, len(meshes)):
+    refinement = f"{meshes[i - 1]} -> {meshes[i]}"
+
+    print(
+        f"{refinement:>15} "
+        f"{orders[i, 0]:12.5f} "
+        f"{orders[i, 1]:12.5f} "
+        f"{orders[i, 2]:12.5f} "
+        f"{orders[i, 3]:14.5f}"
+    )
+
+print()
+
+
+# =============================================================================
+# 8. Enregistrer les mesures et les ordres dans un tableau CSV
+# =============================================================================
+
+table_file = OUTPUT / "convergence.csv"
+
+with table_file.open(
+    "w",
+    newline="",
+    encoding="utf-8"
+) as stream:
+    writer = csv.writer(stream)
+
+    writer.writerow([
         "n",
+        "ndof",
         "h",
         "l2",
         "h1_semi",
         "h1",
         "linf_sample",
-        "repetitions"
-    }
+        "p_l2",
+        "p_h1_semi",
+        "p_h1",
+        "p_linf_sample"
+    ])
 
-    if not required.issubset(rows[0]):
-        missing = required.difference(rows[0])
-
-        raise ValueError(
-            f"Colonnes manquantes dans {path.name} : "
-            f"{sorted(missing)}"
+    for i, n in enumerate(meshes):
+        # Laisser les premiers ordres vides : ils sont indéfinis.
+        order_row = (
+            ["", "", "", ""]
+            if i == 0
+            else orders[i, :].tolist()
         )
 
-    # Ne convertir que les colonnes nécessaires.
-    # Les colonnes p_* peuvent contenir un NaN intentionnel
-    # pour le premier ordre, qui est indéfini.
-    data = {
-        key: np.array([float(row[key]) for row in rows])
-        for key in required
-    }
-
-    for key, values in data.items():
-        if not np.isfinite(values).all():
-            raise ValueError(
-                f"Valeur non finie dans la colonne {key}."
-            )
-
-    # Ordre décroissant en h : grossier -> fin.
-    order = np.argsort(data["h"])[::-1]
-
-    data = {
-        key: values[order]
-        for key, values in data.items()
-    }
-
-    if np.any(data["h"] <= 0):
-        raise ValueError("Les pas h doivent être positifs.")
-
-    if np.any(np.diff(data["h"]) >= 0):
-        raise ValueError(
-            "Les pas doivent être distincts après le tri."
+        writer.writerow(
+            [n, int(node_counts[i]), steps[i]]
+            + error_values[i, :].tolist()
+            + order_row
         )
 
-    for key in ("l2", "h1_semi", "h1", "linf_sample"):
-        if np.any(data[key] <= 0):
-            raise ValueError(
-                f"Les erreurs {key} doivent être positives "
-                "pour calculer leurs logarithmes."
-            )
-
-    return data
+print(f"Tableau enregistré : {table_file}")
 
 
-def read_solution(path):
-    """
-    Lire les colonnes :
-        x, y, solution approchée, solution exacte.
-    """
-    path = Path(path)
+# =============================================================================
+# 9. Lire la solution du maillage le plus fin
+# =============================================================================
 
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Fichier de solution introuvable : {path}"
-        )
+finest_n = meshes[-1]
+solution_file = OUTPUT / f"n{finest_n}" / "solution.dat"
 
-    data = np.loadtxt(path, ndmin=2)
+data = np.loadtxt(solution_file, ndmin=2)
 
-    if data.shape[1] != 4:
-        raise ValueError(
-            "solution.dat doit contenir exactement quatre colonnes."
-        )
-
-    if not np.isfinite(data).all():
-        raise ValueError(
-            "La solution contient des valeurs NaN ou infinies."
-        )
-
-    return data[:, 0], data[:, 1], data[:, 2], data[:, 3]
-
-
-def build_triangulation(x, y):
-    """
-    Reconstruire le maillage triangulaire structuré du code Fortran.
-
-    Les dimensions sont déduites des coordonnées.
-    La numérotation attendue est ligne par ligne, x variant le plus vite.
-    """
-    x_unique = np.unique(x)
-    y_unique = np.unique(y)
-
-    nx = x_unique.size - 1
-    ny = y_unique.size - 1
-
-    if nx < 1 or ny < 1:
-        raise ValueError("Dimensions du maillage invalides.")
-
-    if x.size != (nx + 1) * (ny + 1):
-        raise ValueError(
-            "Les coordonnées ne forment pas une grille complète."
-        )
-
-    expected_x, expected_y = np.meshgrid(
-        x_unique,
-        y_unique,
-        indexing="xy"
+if data.shape != ((finest_n + 1) ** 2, 4):
+    raise ValueError(
+        "Dimensions inattendues dans solution.dat."
     )
 
-    if not (
-        np.allclose(x, expected_x.ravel())
-        and np.allclose(y, expected_y.ravel())
-    ):
-        raise ValueError(
-            "L'ordre des nœuds ne correspond pas "
-            "à la numérotation Fortran attendue."
-        )
+if not np.isfinite(data).all():
+    raise ValueError("La solution contient des valeurs non finies.")
 
-    triangles = []
+x = data[:, 0]
+y = data[:, 1]
+u_approx = data[:, 2]
+u_exact_nodes = data[:, 3]
 
-    for j in range(ny):
-        for i in range(nx):
-
-            # Sommets inférieur gauche et supérieur gauche.
-            p = j * (nx + 1) + i
-            q = p + nx + 1
-
-            # Même diagonale que dans domain.f90.
-            triangles.append([p, p + 1, q])
-            triangles.append([p + 1, q + 1, q])
-
-    triangulation = Triangulation(
-        x,
-        y,
-        np.asarray(triangles, dtype=int)
+if not np.allclose(
+    u_exact_nodes,
+    exact_solution(x, y),
+    rtol=1.0e-10,
+    atol=1.0e-12
+):
+    raise ValueError(
+        "Les valeurs exactes du fichier ne correspondent pas au cas choisi."
     )
 
-    return triangulation, nx, ny
 
+# =============================================================================
+# 10. Reconstruire les triangles du maillage Fortran
+# =============================================================================
 
-def plot_solutions(solution_file, output_file):
-    """
-    Figure 1 : les deux solutions en cartes de couleurs.
+# Vérifier la numérotation avant de reconstruire la connectivité.
+grid = np.linspace(0.0, 1.0, finest_n + 1)
+X_nodes, Y_nodes = np.meshgrid(grid, grid)
 
-    Les niveaux sont communs pour éviter qu'une différence
-    d'échelle de couleurs masque une différence de valeurs.
-    """
-    x, y, uh, u_exact = read_solution(solution_file)
-
-    triangulation, nx, ny = build_triangulation(x, y)
-
-    vmin = min(float(uh.min()), float(u_exact.min()))
-    vmax = max(float(uh.max()), float(u_exact.max()))
-
-    # Éviter des niveaux identiques si les champs sont constants.
-    if vmax == vmin:
-        padding = max(1.0, abs(vmin)) * 1.0e-6
-        vmin -= padding
-        vmax += padding
-
-    levels = np.linspace(vmin, vmax, 61)
-
-    fig, axes = plt.subplots(
-        1,
-        2,
-        num=1,
-        figsize=(13, 5),
-        constrained_layout=True
+if not (
+    np.allclose(x, X_nodes.ravel())
+    and np.allclose(y, Y_nodes.ravel())
+):
+    raise ValueError(
+        "La numérotation des nœuds ne correspond pas à domain.f90."
     )
 
-    fields = (uh, u_exact)
+triangles = []
 
-    titles = (
-        r"Solution approchée $u_h$",
-        r"Solution exacte aux nœuds $u$"
-    )
+for j in range(finest_n):
+    for i in range(finest_n):
+        p = j * (finest_n + 1) + i
+        q = p + finest_n + 1
 
-    for ax, values, title in zip(axes, fields, titles):
+        triangles.append([p, p + 1, q])
+        triangles.append([p + 1, q + 1, q])
 
-        contour = ax.tricontourf(
-            triangulation,
-            values,
-            levels=levels,
-            cmap="viridis"
-        )
-
-        # Sur un maillage très fin, les arêtes masqueraient les couleurs.
-        if max(nx, ny) <= 32:
-            ax.triplot(
-                triangulation,
-                color="black",
-                linewidth=0.2,
-                alpha=0.25
-            )
-
-        ax.set_title(title)
-        ax.set_xlabel(r"$x$")
-        ax.set_ylabel(r"$y$")
-        ax.set_aspect("equal")
-
-    colorbar = fig.colorbar(
-        contour,
-        ax=axes,
-        shrink=0.9,
-        pad=0.03
-    )
-
-    colorbar.set_label("Valeur de la solution")
-
-    fig.suptitle(
-        f"Poisson 2D — comparaison sur le maillage {nx} × {ny}"
-    )
-
-    fig.savefig(
-        output_file,
-        dpi=200,
-        bbox_inches="tight"
-    )
-
-    print(f"Figure 1 enregistrée : {output_file}")
+triangulation = Triangulation(
+    x,
+    y,
+    triangles=np.asarray(triangles, dtype=int)
+)
 
 
-def plot_log_errors(data, output_file):
-    """
-    Figure 2 : log(erreur) en fonction de log(h).
+# =============================================================================
+# 11. Préparer une grille fine pour la solution analytique
+# =============================================================================
 
-    Les logarithmes sont calculés explicitement.
-    Les axes de la figure restent donc linéaires.
-    """
-    h = data["h"]
-    log_h = np.log(h)
+fine_grid = np.linspace(0.0, 1.0, 301)
+X, Y = np.meshgrid(fine_grid, fine_grid)
 
-    fig, ax = plt.subplots(
-        num=2,
-        figsize=(10, 6),
-        constrained_layout=True
-    )
+U_exact = exact_solution(X, Y)
 
-    curves = (
-        ("l2", "o", r"$\log(E_{L^2})$"),
-        ("h1_semi", "s", r"$\log(E_{H^1,\mathrm{semi}})$"),
-        ("h1", "D", r"$\log(E_{H^1})$"),
-        (
-            "linf_sample",
-            "^",
-            r"$\log(E_{\infty,\mathrm{échant.}})$"
-        )
-    )
+# Échelle de couleurs commune aux deux sous-figures.
+vmin = min(float(u_approx.min()), float(U_exact.min()))
+vmax = max(float(u_approx.max()), float(U_exact.max()))
 
-    for key, marker, label in curves:
-        ax.plot(
-            log_h,
-            np.log(data[key]),
-            marker=marker,
-            linewidth=1.8,
-            markersize=6,
-            label=label
-        )
+if vmax == vmin:
+    vmax = vmin + 1.0e-12
 
-    # Repères graphiques ancrés sur le maillage le plus fin.
-    # Ils ne modifient pas les mesures et ne prouvent pas les ordres.
-    reference_l2 = (
-        np.log(data["l2"][-1])
-        + 2.0 * (log_h - log_h[-1])
-    )
+levels = np.linspace(vmin, vmax, 61)
 
-    reference_h1 = (
-        np.log(data["h1_semi"][-1])
-        + (log_h - log_h[-1])
-    )
 
-    ax.plot(
+# =============================================================================
+# 12. Fenêtre 1 : solutions approchée et exacte en 2D
+# =============================================================================
+
+fig_solution = plt.figure(
+    num=1,
+    figsize=(13, 6),
+    constrained_layout=True
+)
+
+subfigures = fig_solution.subfigures(1, 2)
+
+# Sous-figure gauche : approximation P1.
+ax_approx = subfigures[0].subplots()
+
+image_approx = ax_approx.tricontourf(
+    triangulation,
+    u_approx,
+    levels=levels,
+    cmap="viridis"
+)
+
+subfigures[0].suptitle("Solution approchée")
+
+subfigures[0].colorbar(
+    image_approx,
+    ax=ax_approx,
+    shrink=0.8,
+    label="Valeur de u"
+)
+
+# Sous-figure droite : solution analytique.
+ax_exact = subfigures[1].subplots()
+
+image_exact = ax_exact.contourf(
+    X,
+    Y,
+    U_exact,
+    levels=levels,
+    cmap="viridis"
+)
+
+subfigures[1].suptitle("Solution exacte")
+
+subfigures[1].colorbar(
+    image_exact,
+    ax=ax_exact,
+    shrink=0.8,
+    label="Valeur de u"
+)
+
+for ax in (ax_approx, ax_exact):
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_aspect("equal")
+
+fig_solution.suptitle(
+    f"Poisson 2D — cas {args.case} — "
+    f"maillage {finest_n} × {finest_n}"
+)
+
+solution_image = OUTPUT / "solutions_2d.png"
+fig_solution.savefig(solution_image, dpi=200)
+
+
+# =============================================================================
+# 13. Fenêtre 2 : logarithmes des erreurs en fonction de log(h)
+# =============================================================================
+
+fig_error, ax_error = plt.subplots(
+    num=2,
+    figsize=(10, 7),
+    constrained_layout=True
+)
+
+labels = (
+    r"Erreur $L^2$",
+    r"Erreur $H^1$ semi-norme",
+    r"Erreur $H^1$ complète",
+    r"Erreur $L^\infty$ échantillonnée"
+)
+
+markers = ("o", "s", "D", "^")
+
+log_h = np.log(steps)
+
+for index, label in enumerate(labels):
+    ax_error.plot(
         log_h,
-        reference_l2,
-        "--",
-        color="black",
-        label="Repère : pente 2"
+        np.log(error_values[:, index]),
+        marker=markers[index],
+        linewidth=1.8,
+        markersize=6,
+        label=label
     )
 
-    ax.plot(
-        log_h,
-        reference_h1,
-        ":",
-        color="gray",
-        linewidth=2,
-        label="Repère : pente 1"
-    )
+# Repères graphiques de pentes 2 et 1.
+# Ces repères ne remplacent pas les ordres calculés dans le tableau.
+reference_l2 = (
+    np.log(error_values[-1, 0])
+    + 2.0 * (log_h - log_h[-1])
+)
 
-    # Le raffinement se lit de gauche à droite :
-    # grand h à gauche, petit h à droite.
-    ax.invert_xaxis()
+reference_h1 = (
+    np.log(error_values[-1, 1])
+    + (log_h - log_h[-1])
+)
 
-    ax.set_xlabel(r"$\log(h)$")
-    ax.set_ylabel(r"$\log(\mathrm{erreur})$")
+ax_error.plot(
+    log_h,
+    reference_l2,
+    "--",
+    color="black",
+    label="Repère : pente 2"
+)
 
-    ax.set_title(
-        "Évolution des erreurs avec le raffinement du maillage"
-    )
+ax_error.plot(
+    log_h,
+    reference_h1,
+    ":",
+    color="gray",
+    linewidth=2,
+    label="Repère : pente 1"
+)
 
-    ax.grid(
-        True,
-        linestyle="--",
-        alpha=0.45
-    )
+ax_error.set_xlabel(r"$\log(h)$")
+ax_error.set_ylabel(r"$\log(E)$")
 
-    ax.legend()
+ax_error.set_title(
+    "Convergence des erreurs en fonction du pas du maillage"
+)
 
-    fig.savefig(
-        output_file,
-        dpi=200,
-        bbox_inches="tight"
-    )
+ax_error.grid(True, linestyle="--", alpha=0.4)
+ax_error.legend()
 
-    print(f"Figure 2 enregistrée : {output_file}")
+# Le raffinement se lit de gauche à droite.
+ax_error.invert_xaxis()
 
-
-def main():
-    """Lire les résultats du cas choisi et construire les deux figures."""
-    results_dir = ROOT / "results" / f"case_{args.case_id}"
-
-    convergence_file = results_dir / "convergence.csv"
-
-    data = read_convergence(convergence_file)
-
-    if args.solution is None:
-
-        # Après tri, la dernière ligne correspond au plus petit h.
-        n = int(data["n"][-1])
-        repetitions = int(data["repetitions"][-1])
-
-        if repetitions < 1:
-            raise ValueError(
-                "Le nombre de répétitions doit être positif."
-            )
-
-        solution_file = (
-            results_dir
-            / f"n{n}"
-            / f"repeat{repetitions - 1}"
-            / "solution.dat"
-        )
-
-    else:
-        # Un chemin relatif explicite est interprété depuis
-        # le répertoire courant du terminal.
-        solution_file = args.solution.expanduser().resolve()
-
-    print(f"Cas représenté : {args.case_id}")
-    print(f"Solution utilisée : {solution_file}")
-    print(f"Convergence utilisée : {convergence_file}")
-
-    plot_solutions(
-        solution_file,
-        results_dir / "solution.png"
-    )
-
-    plot_log_errors(
-        data,
-        results_dir / "convergence.png"
-    )
-
-    # Sauvegarder les deux figures avant un éventuel affichage.
-    if not args.no_show:
-        plt.show()
-
-    plt.close("all")
+error_image = OUTPUT / "log_erreurs.png"
+fig_error.savefig(error_image, dpi=200)
 
 
-if __name__ == "__main__":
-    main()
+# =============================================================================
+# 14. Afficher les deux fenêtres
+# =============================================================================
+
+print(f"Figure des solutions : {solution_image}")
+print(f"Figure des erreurs   : {error_image}")
+
+if not args.no_show:
+    # Un seul appel affiche les deux figures déjà construites.
+    plt.show()
+
+plt.close("all")

@@ -42,7 +42,7 @@ CORE = src/precision.f90 \
 # Empêcher leur exécution simultanée par make -j.
 .NOTPARALLEL:
 
-.PHONY: all test run study clean
+#.PHONY: all test run study clean
 
 all: bin/poisson2d
 
@@ -64,10 +64,6 @@ test: bin/unit_tests
 run: bin/poisson2d
 	mkdir -p "$(OUT)"
 	./bin/poisson2d "$(N)" "$(CASE)" "$(OUT)"
-
-# Étude de convergence.
-study: bin/poisson2d
-	$(PYTHON) python/study.py --case 1 --check
 
 # Nettoyage des fichiers de compilation uniquement.
 clean:

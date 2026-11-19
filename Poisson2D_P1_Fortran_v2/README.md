@@ -46,11 +46,10 @@ Le workflow GitHub Actions est situé à la racine du dépôt :
 10. Compilation
 11. Tests unitaires et convergence
 12. Exécution du solveur
-13. Études Python
-14. Visualisation
-15. Résultats et interprétation
-16. Mesures de performance
-17. Pipeline CI/CD
+13. Visualisation
+14. Résultats et interprétation
+15. Mesures de performance
+16. Pipeline CI/CD
 
 
 ## 1. Objectifs du projet
@@ -528,7 +527,6 @@ Poisson2D
     │   ├── unit.f90
     │   └── test_analysis.py
     ├── python/
-    │   ├── study.py
     │   └── plot_results.py
     ├── bin/
     │   ├── poisson2d
@@ -992,78 +990,18 @@ Chaque lancement remplace les fichiers de son dossier.
 
 Utiliser des dossiers différents pour conserver plusieurs calculs.
 
-## 13. Études Python
-
-### 13.1 Campagnes de référence
-
-```bash
-python3 python/study.py --case 1 --check
-python3 python/study.py --case 2 --check
-```
-
-Les valeurs par défaut sont :
-
-```text
-n = 8, 12, 16, 24, 32, 48, 64
-répétitions = 3
-```
-
-### 13.2 Campagne personnalisée
-
-```bash
-python python/study.py \
-    --case 1 \
-    --meshes 16 24 32 48 64 96 128 \
-    --repeat 5 \
-    --check
-```
-
-L’option `--check` provoque un échec si les contrôles scientifiques finaux échouent.
-
-### 13.3 Ordres expérimentaux
-
-\[
-p_i=
-\frac{\log(E_{i-1}/E_i)}
-{\log(h_{i-1}/h_i)}.
-\]
-
-Cette formule ne suppose pas un doublement des subdivisions.
-
-Dans le CSV Python, le premier ordre est NaN, car il est indéfini.
-
-### 13.4 Conservation des répétitions
-
-Chaque répétition possède son dossier :
-
-```text
-n32/repeat0/
-n32/repeat1/
-n32/repeat2/
-```
-
-Le fichier `run.log` conserve les sorties du programme Fortran.
-
-Les campagnes réutilisent leurs chemins : sauvegarder une étude importante avant de la relancer avec des paramètres différents.
-
 ## 14. Visualisation
 
 ### 14.1 Relire les résultats
 
 ```bash
-python python/plot_results.py --case 1
-```
-
-Pour le cas polynomial :
-
-```bash
-python python/plot_results.py --case 2
+python python/plot_results.py
 ```
 
 Sans fenêtre :
 
 ```bash
-python python/plot_results.py --case 1 --no-show
+python python/plot_results.py --no-show
 ```
 
 ### 14.2 Figure 1

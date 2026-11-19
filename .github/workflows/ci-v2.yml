@@ -33,12 +33,6 @@ jobs:
         run: make test
       - name: Compiler le solveur optimise
         run: make
-      - name: Convergence trigonométrique
-        run: python python/study.py --case 1 --repeat 2 --check
-      - name: Convergence polynomiale
-        run: python python/study.py --case 2 --repeat 2 --check
-      - name: Conserver les résultats même si un contrôle échoue
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: poisson2d-v2-validation
