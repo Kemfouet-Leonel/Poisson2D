@@ -15,7 +15,7 @@
 module solver
 
   use precision, only: dp
-  use spa
+  use sparse, only: csr_t, matvec
 
   implicit none
 
