@@ -1,9 +1,13 @@
 name: Poisson P1 sparse validation
 on:
   push:
-    branches: [main]
+    branches: 
+      - main
+      - feature/poisson2d_v2
   pull_request:
-    branches: [main]
+    branches: 
+      - main
+      - feature/poisson2d_v2
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,4 +45,3 @@ jobs:
           path: Poisson2D_P1_Fortran_v2/results/
           if-no-files-found: warn
           retention-days: 14
-
