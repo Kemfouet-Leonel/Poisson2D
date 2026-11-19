@@ -212,24 +212,7 @@ program unit_tests
   call check( &
     maxval(abs(u-exact_u)) < 1.0e-9_dp, &
     'PCG : solution algebrique connue' &
-  )FC = gfortran
-FFLAGS = -O3 -std=f2008 -Wall -Wextra -ffree-line-length-none
-CORE = src/precision.f90 src/quadrature.f90 src/domain.f90 src/exact.f90 src/sparse.f90 src/fem.f90 src/solver.f90 src/errors.f90
-.PHONY: all test study clean
-all: bin/poisson2d
-bin/poisson2d: $(CORE) src/main.f90 Makefile
-	mkdir -p bin build
-	$(FC) $(FFLAGS) -Jbuild -Ibuild $(CORE) src/main.f90 -o $@
-bin/unit_tests: $(CORE) tests/unit.f90 Makefile
-	mkdir -p bin build
-	$(FC) -O0 -g -std=f2008 -Wall -Wextra -ffree-line-length-none -fcheck=all -fbacktrace -ffpe-trap=invalid,zero,overflow -Jbuild -Ibuild $(CORE) tests/unit.f90 -o $@
-test: bin/unit_tests
-	./bin/unit_tests
-study: bin/poisson2d
-	python3 python/study.py --check
-clean:
-	rm -rf bin build
-
+  )
 
   ! Vérifier le résidu indépendamment du scalaire renvoyé par PCG.
   call matvec(a, u, av)
