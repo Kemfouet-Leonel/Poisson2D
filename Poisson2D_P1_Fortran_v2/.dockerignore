@@ -1,0 +1,21 @@
+# Environnement Python local.
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Fichiers compilés sur la machine hôte.
+bin/
+build/
+*.o
+*.mod
+
+# Résultats et sauvegardes : ne pas les copier dans l'image.
+results/
+backups/
+*.tar
+*.tar.gz
+
+# Métadonnées Git et fichiers temporaires.
+.git/
+*.swp

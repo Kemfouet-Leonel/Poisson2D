@@ -1,0 +1,54 @@
+# Définition des applications exécutables avec Docker Compose.
+services:
+  poisson:
+    # Réutiliser l'image locale déjà construite.
+    image: poisson2d:local
+
+    # Ne pas essayer de télécharger cette image depuis Docker Hub.
+    pull_policy: never
+
+    # Permettre une reconstruction avec docker compose build.
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # Dossier de travail à l'intérieur du conteneur.
+    working_dir: /app
+
+    environment:
+      # Enregistrer les figures sans ouvrir de fenêtres graphiques.
+      MPLBACKEND: Agg
+
+      # Dossier temporaire accessible pour la configuration Matplotlib.
+      MPLCONFIGDIR: /tmp/matplotlib
+
+      # Limiter les bibliothèques concernées à un seul thread.
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+
+    volumes:
+      # Conserver les résultats dans le volume Docker existant.
+      - results-data:/app/results
+
+    # Commande par défaut : calcul et visualisation du cas 1.
+    # La liste ci-dessous utilise la syntaxe YAML, sans fichier JSON.
+    command:
+      - python
+      - python/plot_results.py
+      - --case
+      - "1"
+      - --meshes
+      - "8"
+      - "16"
+      - "32"
+      - "64"
+      - --no-show
+
+# Déclaration du volume utilisé par le service.
+volumes:
+  results-data:
+    # Le volume est géré séparément de cette configuration Compose.
+    external: true
+
+    # Nom exact du volume déjà utilisé avec docker run.
+    name: poisson2d_results
